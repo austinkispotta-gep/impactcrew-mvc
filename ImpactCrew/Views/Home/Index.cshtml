@@ -1,8 +1,180 @@
 ﻿@{
-    ViewData["Title"] = "Home Page";
+    ViewData["Title"] = "InvoiceIQ Chat";
+    var sessionGuid = Guid.NewGuid().ToString();
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="app-shell">
+    <input type="hidden" id="sessionId" value="@sessionGuid" />
+    <aside class="side-panel">
+        <div class="brand mb-3">
+            <h3 class="brand-title">InvoiceIQ</h3>
+            <p class="brand-sub">3 Way Matching Assistant</p>
+        </div>
+        <div class="panel-section">
+            <h6 class="section-title">Authorization Token</h6>
+            <input type="password" id="authToken" class="form-control mb-2" placeholder="Paste Bearer token" />
+            <div class="small text-muted mb-3">Token used for all API calls. It is not stored.</div>
+            <h6 class="section-title">Upload Files</h6>
+            <div class="upload-group">
+                <label class="form-label">PO Excel</label>
+                <input type="file" class="form-control" id="poFile" accept=".xlsx,.xls,.csv" />
+            </div>
+            <div class="upload-group">
+                <label class="form-label">GRN Excel</label>
+                <input type="file" class="form-control" id="grnFile" accept=".xlsx,.xls,.csv" />
+            </div>
+            <div class="upload-group" id="invoiceExcelWrapper">
+                <label class="form-label">Invoice Excel</label>
+                <input type="file" class="form-control" id="invoiceFile" accept=".xlsx,.xls,.csv" />
+            </div>
+            <div class="upload-group d-none" id="invoicePdfWrapper">
+                <label class="form-label">Invoice PDFs (multiple)</label>
+                <input type="file" class="form-control" id="invoicePdfs" accept="application/pdf" multiple />
+            </div>
+            <div class="form-check form-switch mt-2 mb-3 small">
+                <input class="form-check-input" type="checkbox" id="toggleInvoiceType" />
+                <label class="form-check-label" for="toggleInvoiceType">Use multiple invoice PDFs</label>
+            </div>
+            <div class="hint-box small mb-3">Upload all 3 before proceeding. Excel or PDFs for Invoice.</div>
+            <div class="d-grid gap-2">
+                <button id="btnAnalyze" class="btn btn-primary" disabled>
+                    <span class="icon">📊</span> Analyze & Generate Report
+                </button>
+            </div>
+        </div>
+        <div class="panel-section" id="exportFiles"></div>
+    </aside>
+    <main class="chat-panel">
+        <div class="chat-header justify-content-between">
+            <div class="chat-title">Conversation</div>
+            <div class="header-right d-flex align-items-center">
+                <button id="btnCopySession" class="btn btn-sm btn-outline-primary me-2">Copy SessionId</button>
+                <button id="btnResetSession" class="btn btn-sm btn-outline-danger">Reset Session</button>
+            </div>
+        </div>
+        <div id="infoPopup" class="alert alert-info d-none m-3 py-2 px-3 small"></div>
+        <div id="chatWindow" class="chat-window" aria-label="Conversation messages"></div>
+        <div class="chat-footer" id="chatFooter">
+            <div class="input-group" id="chatInputGroup">
+                <input type="text" id="chatInput" class="form-control" placeholder="Type follow-up query" disabled />
+                <button id="chatSend" class="btn btn-success" disabled>Send</button>
+            </div>
+        </div>
+        <div class="loading-overlay d-none" id="loadingOverlay">
+            <div class="spinner-border text-primary" role="status"></div>
+            <div class="mt-2 fw-semibold">Processing...</div>
+        </div>
+    </main>
 </div>
+
+@section Scripts {
+<script>
+    let sessionId = document.getElementById('sessionId').value;
+    const authToken = document.getElementById('authToken');
+    const poFile = document.getElementById('poFile');
+    const grnFile = document.getElementById('grnFile');
+    const invoiceFile = document.getElementById('invoiceFile');
+    const invoicePdfs = document.getElementById('invoicePdfs');
+    const toggleInvoiceType = document.getElementById('toggleInvoiceType');
+    const btnAnalyze = document.getElementById('btnAnalyze');
+    const chatWindow = document.getElementById('chatWindow');
+    const exportFiles = document.getElementById('exportFiles');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const chatInput = document.getElementById('chatInput');
+    const chatSend = document.getElementById('chatSend');
+    const infoPopup = document.getElementById('infoPopup');
+    const btnCopySession = document.getElementById('btnCopySession');
+    const btnResetSession = document.getElementById('btnResetSession');
+
+    function showInfo(message, type = 'info') {
+        infoPopup.className = 'alert alert-' + (type === 'error' ? 'danger' : type) + ' py-2 px-3 small';
+        infoPopup.innerText = message;
+        infoPopup.classList.remove('d-none');
+        setTimeout(() => infoPopup.classList.add('d-none'), 6000);
+    }
+
+    btnCopySession.addEventListener('click', () => { navigator.clipboard.writeText(sessionId).then(() => showInfo('SessionId copied')); });
+
+    btnResetSession.addEventListener('click', () => {
+        sessionId = crypto.randomUUID();
+        document.getElementById('sessionId').value = sessionId;
+        chatWindow.innerHTML = ''; exportFiles.innerHTML='';
+        chatInput.value=''; chatInput.disabled = true; chatSend.disabled = true;
+        showInfo('Session reset');
+    });
+
+    function validateFiles() {
+        const tokenOk = authToken.value.trim().length > 0;
+        const hasPO = poFile.files.length === 1;
+        const hasGRN = grnFile.files.length === 1;
+        const hasInvoice = !toggleInvoiceType.checked ? invoiceFile.files.length === 1 : invoicePdfs.files.length > 0;
+        const allOk = tokenOk && hasPO && hasGRN && hasInvoice;
+        btnAnalyze.disabled = !allOk;
+        if (!allOk) { chatInput.disabled = true; chatSend.disabled = true; }
+    }
+
+    [authToken, poFile, grnFile, invoiceFile, invoicePdfs].forEach(el => el.addEventListener('input', validateFiles));
+    [poFile, grnFile, invoiceFile, invoicePdfs].forEach(el => el.addEventListener('change', validateFiles));
+
+    toggleInvoiceType.addEventListener('change', () => {
+        if (toggleInvoiceType.checked) { invoiceExcelWrapper.classList.add('d-none'); invoicePdfWrapper.classList.remove('d-none'); }
+        else { invoiceExcelWrapper.classList.remove('d-none'); invoicePdfWrapper.classList.add('d-none'); }
+        validateFiles();
+    });
+
+    btnAnalyze.addEventListener('click', () => { enableChatInputForAnalyze(); analyze(); });
+    chatSend.addEventListener('click', () => { const msg = chatInput.value.trim(); if(msg){ appendMessage('user', msg); analyze(msg); chatInput.value=''; } });
+    chatInput.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); const msg = chatInput.value.trim(); if(msg){ appendMessage('user', msg); analyze(msg); chatInput.value=''; } }});
+
+    function enableChatInputForAnalyze(){ chatInput.disabled=false; chatInput.focus(); }
+
+    function setLoading(isLoading) {
+        if (isLoading) { loadingOverlay.classList.remove('d-none'); btnAnalyze.disabled = true; chatSend.disabled = true; }
+        else { loadingOverlay.classList.add('d-none'); validateFiles(); }
+    }
+
+    function appendMessage(role, content) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'msg-row ' + (role === 'assistant' ? 'assistant' : 'user');
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.innerText = content;
+        wrapper.appendChild(bubble);
+        chatWindow.appendChild(wrapper);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    async function analyze(customMessage = '') {
+        if (!authToken.value.trim()) { showInfo('Token required','error'); return; }
+        const formData = new FormData();
+        formData.append('PoFile', poFile.files[0]);
+        formData.append('GrnFile', grnFile.files[0]);
+        if (!toggleInvoiceType.checked) { if (invoiceFile.files.length === 1) formData.append('InvoiceFile', invoiceFile.files[0]); }
+        else { for (let i=0;i<invoicePdfs.files.length;i++){ formData.append('InvoicePdfs', invoicePdfs.files[i]); } }
+        formData.append('SessionId', sessionId);
+        formData.append('Token', authToken.value.trim());
+        if (customMessage) formData.append('CustomMessage', customMessage);
+
+        setLoading(true);
+        try {
+            const resp = await fetch('/agent/analyze', { method: 'POST', body: formData });
+            if (!resp.ok) { showInfo(await resp.text(),'error'); return; }
+            const data = await resp.json();
+            if (data.agentResponse?.returnValue?.messages) { data.agentResponse.returnValue.messages.forEach(m => { if (m.role === 'assistant') appendMessage('assistant', m.content); }); }
+            exportFiles.innerHTML = '';
+            if (data.generatedFilePaths) { const header = document.createElement('h6'); header.className='section-title mt-3'; header.innerText='Export Files'; exportFiles.appendChild(header); data.generatedFilePaths.forEach(fp => addExportButton(fp)); }
+            chatSend.disabled = false;
+        } catch(err){ showInfo(err.message || 'Unexpected error','error'); }
+        finally { setLoading(false); }
+    }
+
+    function addExportButton(filePath) {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-outline-success w-100 text-truncate mb-2';
+        btn.title = filePath;
+        btn.innerHTML = '⬇️ ' + filePath.split('/').pop();
+        btn.onclick = () => { const url = '/agent/download-export?filePath=' + encodeURIComponent(filePath) + '&token=' + encodeURIComponent(authToken.value.trim()); window.open(url,'_blank'); };
+        exportFiles.appendChild(btn);
+    }
+</script>
+}
