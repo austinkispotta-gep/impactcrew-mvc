@@ -8,14 +8,20 @@
     <input type="hidden" id="sessionId" value="@sessionGuid" />
     <input type="hidden" id="messageId" value="@messageId" />
     <aside class="side-panel">
-        <div class="brand mb-3">
-            <h3 class="brand-title">InvoiceIQ</h3>
-            <p class="brand-sub">3 Way Matching Assistant</p>
+        <div style="margin-bottom:0;">
+            <div style="display:inline;">
+                <img src="./ideate_logo.png" alt="Ideate Logo" style="display:flex; width:220px; margin-right:30px;" />
+                <h6 class="brand-title" style="display:flex;font-family: Verdana;">ImpactCrew</h6>
+            </div>
+            <p class="brand-sub" style="margin-bottom: 5px;">3 Way Matching Assistant</p>
+            <p style="font-size:12px; margin-bottom: 0;">Think of AI as the colleague who never gets tired, never misses a decimal, never needs coffee.</p>
         </div>
+        <hr />
         <div class="panel-section">
             <h6 class="section-title">Authorization Token</h6>
             <input type="password" id="authToken" class="form-control mb-2" placeholder="Paste Bearer token" />
             <div class="small text-muted mb-3">Token used for all API calls. It is not stored.</div>
+            <hr />
             <h6 class="section-title">Upload Files</h6>
             <div class="upload-group">
                 <label class="form-label">PO Excel</label>
