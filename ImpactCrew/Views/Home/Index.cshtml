@@ -1,10 +1,12 @@
 ﻿@{
     ViewData["Title"] = "InvoiceIQ Chat";
     var sessionGuid = Guid.NewGuid().ToString();
+    var messageId = 0;
 }
 
 <div class="app-shell">
     <input type="hidden" id="sessionId" value="@sessionGuid" />
+    <input type="hidden" id="messageId" value="@messageId" />
     <aside class="side-panel">
         <div class="brand mb-3">
             <h3 class="brand-title">InvoiceIQ</h3>
@@ -70,6 +72,7 @@
 @section Scripts {
 <script>
     let sessionId = document.getElementById('sessionId').value;
+    let messageId = parseInt(document.getElementById('messageId').value, 10); // ensure numeric
     const authToken = document.getElementById('authToken');
     const poFile = document.getElementById('poFile');
     const grnFile = document.getElementById('grnFile');
@@ -97,7 +100,9 @@
 
     btnResetSession.addEventListener('click', () => {
         sessionId = crypto.randomUUID();
+        messageId = 0;
         document.getElementById('sessionId').value = sessionId;
+        document.getElementById('messageId').value = messageId;
         chatWindow.innerHTML = ''; exportFiles.innerHTML='';
         chatInput.value=''; chatInput.disabled = true; chatSend.disabled = true;
         showInfo('Session reset');
@@ -123,8 +128,29 @@
     });
 
     btnAnalyze.addEventListener('click', () => { enableChatInputForAnalyze(); analyze(); });
-    chatSend.addEventListener('click', () => { const msg = chatInput.value.trim(); if(msg){ appendMessage('user', msg); analyze(msg); chatInput.value=''; } });
-    chatInput.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); const msg = chatInput.value.trim(); if(msg){ appendMessage('user', msg); analyze(msg); chatInput.value=''; } }});
+    chatSend.addEventListener('click', () => {
+        const msg = chatInput.value.trim();
+        if(msg){
+            appendMessage('user', msg);
+            analyze(msg);
+            chatInput.value='';
+            messageId++;
+            document.getElementById('messageId').value = messageId;
+        }
+    });
+    chatInput.addEventListener('keydown', e => {
+        if(e.key==='Enter'){
+            e.preventDefault();
+            const msg = chatInput.value.trim();
+            if(msg){
+                appendMessage('user', msg);
+                analyze(msg);
+                chatInput.value='';
+                messageId++;
+                document.getElementById('messageId').value = messageId;
+            }
+        }
+    });
 
     function enableChatInputForAnalyze(){ chatInput.disabled=false; chatInput.focus(); }
 
@@ -152,6 +178,7 @@
         if (!toggleInvoiceType.checked) { if (invoiceFile.files.length === 1) formData.append('InvoiceFile', invoiceFile.files[0]); }
         else { for (let i=0;i<invoicePdfs.files.length;i++){ formData.append('InvoicePdfs', invoicePdfs.files[i]); } }
         formData.append('SessionId', sessionId);
+        formData.append('MessageId', messageId.toString()); // correct field
         formData.append('Token', authToken.value.trim());
         if (customMessage) formData.append('CustomMessage', customMessage);
 
@@ -160,9 +187,14 @@
             const resp = await fetch('/agent/analyze', { method: 'POST', body: formData });
             if (!resp.ok) { showInfo(await resp.text(),'error'); return; }
             const data = await resp.json();
-            if (data.agentResponse?.returnValue?.messages) { data.agentResponse.returnValue.messages.forEach(m => { if (m.role === 'assistant') appendMessage('assistant', m.content); }); }
+            if (data.agentResponse?.returnValue?.messages) {
+                data.agentResponse.returnValue.messages.forEach(m => { if (m.role === 'assistant' || m.role === 'tool') appendMessage('assistant', m.content); });
+            }
             exportFiles.innerHTML = '';
-            if (data.generatedFilePaths) { const header = document.createElement('h6'); header.className='section-title mt-3'; header.innerText='Export Files'; exportFiles.appendChild(header); data.generatedFilePaths.forEach(fp => addExportButton(fp)); }
+            if (data.generatedFilePaths) {
+                const header = document.createElement('h6'); header.className='section-title mt-3'; header.innerText='Export Files'; exportFiles.appendChild(header);
+                data.generatedFilePaths.forEach(fp => addExportButton(fp));
+            }
             chatSend.disabled = false;
         } catch(err){ showInfo(err.message || 'Unexpected error','error'); }
         finally { setLoading(false); }

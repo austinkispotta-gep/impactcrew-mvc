@@ -4,6 +4,7 @@ namespace ImpactCrew.Models.View;
 
 public class AnalyzeResultViewModel
 {
+    public int MessageId { get; set; } = 0;
     public string SessionId { get; set; } = string.Empty;
     public AgentInvokeResponse? AgentResponse { get; set; }
     public List<string> GeneratedFilePaths { get; set; } = new();

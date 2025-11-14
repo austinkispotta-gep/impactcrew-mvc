@@ -60,6 +60,8 @@ public class AgentController : Controller
 
             var generatedFilePaths = ExtractFilePaths(invokeResponse);
 
+            dto.MessageId++;
+
             var vm = new AnalyzeResultViewModel
             {
                 SessionId = dto.SessionId,
@@ -91,7 +93,7 @@ public class AgentController : Controller
             using var response = await client.GetAsync(requestUrl);
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, await response.Content.ReadAsStringAsync());
-            var stream = await response.Content.ReadAsStreamAsync();
+            var stream = await response.Content.ReadAsByteArrayAsync();
             return File(stream, "application/octet-stream", Path.GetFileName(filePath));
         }
         catch (Exception ex)
@@ -110,7 +112,7 @@ public class AgentController : Controller
             if (msg.Files == null) continue;
             foreach (var f in msg.Files)
             {
-                if (!string.IsNullOrWhiteSpace(f.Name)) list.Add(f.Name); else if (!string.IsNullOrWhiteSpace(f.Id)) list.Add(f.Id);
+                if (!string.IsNullOrWhiteSpace(f.FilePath)) list.Add(f.FilePath); else if (!string.IsNullOrWhiteSpace(f.Id)) list.Add(f.Id);
             }
         }
         return list.Distinct().ToList();
@@ -118,9 +120,12 @@ public class AgentController : Controller
 
     private async Task<AgentInvokeResponse?> ProcessExcelInvoice(AnalyzeRequestDto dto, string? customMessage, string bearer)
     {
-        _ = await UploadKnowledgeFile(dto.PoFile!, "PO data.xlsx", "PO file", bearer);
-        _ = await UploadKnowledgeFile(dto.GrnFile!, "GRN data.xlsx", "GRN file", bearer);
-        _ = await UploadKnowledgeFile(dto.InvoiceFile!, "Invoice data.xlsx", "Invoice file", bearer);
+        if (string.IsNullOrWhiteSpace(dto.CustomMessage))
+        {
+            _ = await UploadKnowledgeFile(dto.PoFile!, "PO data.xlsx", "PO file", bearer, dto.SessionId);
+            _ = await UploadKnowledgeFile(dto.GrnFile!, "GRN data.xlsx", "GRN file", bearer, dto.SessionId);
+            _ = await UploadKnowledgeFile(dto.InvoiceFile!, "Invoice data.xlsx", "Invoice file", bearer, dto.SessionId);
+        }
         var message = string.IsNullOrWhiteSpace(customMessage) ? "Analyze and generate excel report" : customMessage;
         return await InvokeAgent(dto.SessionId, message, bearer);
     }
@@ -136,8 +141,8 @@ public class AgentController : Controller
                 invoiceTextBuilder.AppendLine(ocr?.Text);
             }
         }
-        _ = await UploadKnowledgeFile(dto.PoFile!, "PO data.xlsx", "PO file", bearer);
-        _ = await UploadKnowledgeFile(dto.GrnFile!, "GRN data.xlsx", "GRN file", bearer);
+        _ = await UploadKnowledgeFile(dto.PoFile!, "PO data.xlsx", "PO file", bearer, dto.SessionId);
+        _ = await UploadKnowledgeFile(dto.GrnFile!, "GRN data.xlsx", "GRN file", bearer, dto.SessionId);
         var baseMessage = string.IsNullOrWhiteSpace(customMessage)
             ? $"Analyze and generate excel report. Invoice data: {invoiceTextBuilder}" : $"Analyze the data and await further instruction. Invoice data: {invoiceTextBuilder}\nUser question: {customMessage}";
         return await InvokeAgent(dto.SessionId, baseMessage, bearer);
@@ -156,26 +161,26 @@ public class AgentController : Controller
         return System.Text.Json.JsonSerializer.Deserialize<OcrResponse>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
     }
 
-    private async Task<string?> UploadKnowledgeFile(IFormFile file, string renamedFileName, string description, string bearer)
+    private async Task<string?> UploadKnowledgeFile(IFormFile file, string renamedFileName, string description, string bearer, string sessionId)
     {
-        var saveReq = new SaveKnowledgeRequest
-        {
-            AgentId = AgentId,
-            ModuleId = ModuleId,
-            Version = Version,
-            Environment = EnvironmentCode,
-            BpcCode = BpcCode,
-            AppId = AppId,
-            KnowledgeItems = new List<KnowledgeItem> { new KnowledgeItem { Name = renamedFileName, Description = description } }
-        };
-        var client = _httpClientFactory.CreateClient();
-        ApplyCommonHeaders(client, bearer);
-        var saveJson = System.Text.Json.JsonSerializer.Serialize(saveReq);
-        using var saveResponse = await client.PostAsync("https://api-build.gep.com/leo-portal-aicomponent-api/api/v1/Knowledge/SaveKnowledge", new StringContent(saveJson, System.Text.Encoding.UTF8, "application/json"));
-        if (!saveResponse.IsSuccessStatusCode) return null;
-        var saveRaw = await saveResponse.Content.ReadAsStringAsync();
-        var saveObj = System.Text.Json.JsonSerializer.Deserialize<SaveKnowledgeResponse>(saveRaw, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        var refId = saveObj?.ReturnValue.FirstOrDefault()?.RefId; if (refId == null) return null;
+        //var saveReq = new SaveKnowledgeRequest
+        //{
+        //    AgentId = AgentId,
+        //    ModuleId = ModuleId,
+        //    Version = Version,
+        //    Environment = EnvironmentCode,
+        //    BpcCode = BpcCode,
+        //    AppId = AppId,
+        //    KnowledgeItems = new List<KnowledgeItem> { new KnowledgeItem { Name = renamedFileName, Description = description } }
+        //};
+        //var client = _httpClientFactory.CreateClient();
+        //ApplyCommonHeaders(client, bearer);
+        //var saveJson = System.Text.Json.JsonSerializer.Serialize(saveReq);
+        //using var saveResponse = await client.PostAsync("https://api-build.gep.com/leo-portal-aicomponent-api/api/v1/Knowledge/SaveKnowledge", new StringContent(saveJson, System.Text.Encoding.UTF8, "application/json"));
+        //if (!saveResponse.IsSuccessStatusCode) return null;
+        //var saveRaw = await saveResponse.Content.ReadAsStringAsync();
+        //var saveObj = System.Text.Json.JsonSerializer.Deserialize<SaveKnowledgeResponse>(saveRaw, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        //var refId = saveObj?.ReturnValue.FirstOrDefault()?.RefId; if (refId == null) return null;
 
         var uploadClient = _httpClientFactory.CreateClient();
         ApplyCommonHeaders(uploadClient, bearer);
@@ -183,21 +188,22 @@ public class AgentController : Controller
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms); ms.Position = 0;
         form.Add(new StreamContent(ms), "File", renamedFileName);
-        form.Add(new StringContent(refId), "RefId");
+        form.Add(new StringContent("refId"), "RefId"); // changed to RefId
         form.Add(new StringContent(AgentId), "AgentId");
         form.Add(new StringContent("crate"), "dbType");
-        form.Add(new StringContent("table-file"), "Type");
-        form.Add(new StringContent(description), "Description");
+        form.Add(new StringContent("application"), "Type"); // changed to application
+        //form.Add(new StringContent(description), "Description");
         form.Add(new StringContent(ModuleId), "ModuleId");
         form.Add(new StringContent(Version), "Version");
         form.Add(new StringContent(BpcCode), "BpcCode");
         form.Add(new StringContent(EnvironmentCode), "Environment");
         form.Add(new StringContent(ModelCode), "LanguageModelCode");
         form.Add(new StringContent(AppId), "AppId");
-        form.Add(new StringContent("false"), "useAzureDocIntelligence");
+        //form.Add(new StringContent("false"), "useAzureDocIntelligence");
+        form.Add(new StringContent(sessionId), "SessionId");
         using var uploadResponse = await uploadClient.PostAsync("https://api-build.gep.com/leo-portal-aicomponent-api/api/v1/Attachment/Upload", form);
         if (!uploadResponse.IsSuccessStatusCode) return null;
-        return refId;
+        return "refId"; // changed
     }
 
     private async Task<AgentInvokeResponse?> InvokeAgent(string sessionId, string message, string bearer)
@@ -263,6 +269,7 @@ public class AnalyzeRequestDto
     public IFormFile? GrnFile { get; set; }
     public IFormFile? InvoiceFile { get; set; }
     public List<IFormFile>? InvoicePdfs { get; set; }
+    public int MessageId { get; set; } = 1;
     public string SessionId { get; set; } = string.Empty;
     public string? CustomMessage { get; set; }
     public string Token { get; set; } = string.Empty; // user provided bearer token
