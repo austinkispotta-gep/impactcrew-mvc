@@ -52,7 +52,7 @@ public class AgentController : Controller
             }
 
             dto.Token = ParseToken(dto.Token);
-            await DeleteExistingKnowledge(dto.Token);
+            //await DeleteExistingKnowledge(dto.Token);
 
             AgentInvokeResponse? invokeResponse = dto.InvoiceFile != null
                 ? await ProcessExcelInvoice(dto, dto.CustomMessage, dto.Token)
@@ -133,18 +133,24 @@ public class AgentController : Controller
     private async Task<AgentInvokeResponse?> ProcessPdfInvoices(AnalyzeRequestDto dto, string? customMessage, string bearer)
     {
         var invoiceTextBuilder = new System.Text.StringBuilder();
-        if (dto.InvoicePdfs != null)
+        if (string.IsNullOrWhiteSpace(dto.CustomMessage))
         {
-            foreach (var pdf in dto.InvoicePdfs)
+            if (dto.InvoicePdfs != null)
             {
-                var ocr = await OcrPdf(pdf);
-                invoiceTextBuilder.AppendLine(ocr?.Text);
+                invoiceTextBuilder.AppendLine(Environment.NewLine + "Total invoices: " + dto.InvoicePdfs.Count() + Environment.NewLine);
+                int invoiceId = 1;
+                foreach (var pdf in dto.InvoicePdfs)
+                {
+                    var ocr = await OcrPdf(pdf);
+                    invoiceTextBuilder.AppendLine(Environment.NewLine + "Invoice data " + invoiceId + ":" + Environment.NewLine + ocr?.Text);
+                    invoiceId++;
+                }
             }
+            _ = await UploadKnowledgeFile(dto.PoFile!, "PO data.xlsx", "PO file", bearer, dto.SessionId);
+            _ = await UploadKnowledgeFile(dto.GrnFile!, "GRN data.xlsx", "GRN file", bearer, dto.SessionId);
         }
-        _ = await UploadKnowledgeFile(dto.PoFile!, "PO data.xlsx", "PO file", bearer, dto.SessionId);
-        _ = await UploadKnowledgeFile(dto.GrnFile!, "GRN data.xlsx", "GRN file", bearer, dto.SessionId);
         var baseMessage = string.IsNullOrWhiteSpace(customMessage)
-            ? $"Analyze and generate excel report. Invoice data: {invoiceTextBuilder}" : $"Analyze the data and await further instruction. Invoice data: {invoiceTextBuilder}\nUser question: {customMessage}";
+            ? $"Analyze and generate excel report. Invoice data: {invoiceTextBuilder}" : $"{customMessage}";
         return await InvokeAgent(dto.SessionId, baseMessage, bearer);
     }
 
@@ -155,7 +161,7 @@ public class AgentController : Controller
         using var ms = new MemoryStream();
         await pdfFile.CopyToAsync(ms); ms.Position = 0;
         form.Add(new StreamContent(ms), "file", pdfFile.FileName);
-        using var response = await client.PostAsync("https://impactcrew-ocr-gvc0bghsaqgabgg8.centralindia-01.azurewebsites.net/extract-text", form);
+        using var response = await client.PostAsync("http://127.0.0.1:7800/extract-text", form);
         if (!response.IsSuccessStatusCode) return null;
         var json = await response.Content.ReadAsStringAsync();
         return System.Text.Json.JsonSerializer.Deserialize<OcrResponse>(json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
